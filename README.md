@@ -34,7 +34,7 @@ Each control maps to one or more parameters from the secure development document
 | **Secrets** | All secrets in environment variables; `.env` gitignored; `.env.example` committed with placeholder values only | CONF-1 (ניהול תצורה) |
 | **Transport** | HTTPS enforced via Render SSL + Flask-Talisman HSTS (`max-age=31536000`) | INT-1, ENC-2 |
 | **Security headers** | X-Frame-Options: DENY, X-Content-Type-Options: nosniff, Referrer-Policy: strict-origin-when-cross-origin, strict CSP (see below) | PROTO-1, ERR-1 |
-| **CSP** | `default-src 'self'`; `script-src 'strict-dynamic' https://www.google.com https://www.gstatic.com`; `frame-src https://www.google.com https://recaptcha.google.com`; `style-src 'self'`; per-request nonce injected by Talisman | PROTO-1 |
+| **CSP** | `default-src 'self'`; `script-src 'strict-dynamic' https://www.google.com https://www.gstatic.com`; `frame-src https://www.google.com https://recaptcha.google.com`; `style-src 'self'`; `img-src 'self' data:`; `connect-src 'self' https://www.google.com https://recaptcha.google.com`; per-request nonce injected by Talisman | PROTO-1 |
 | **Session cookies** | `Secure=true`, `HttpOnly=true`, `SameSite=Strict`; 1-hour lifetime | Session layer, INT-1 |
 | **CSRF protection** | Flask-WTF tokens on all POST forms; token in meta tag for JS reads | CSRF layer |
 | **Password hashing** | bcrypt cost factor 12; one-way; plaintext never stored or logged | AUTH-1 (ערבול סיסמאות) |
@@ -43,7 +43,7 @@ Each control maps to one or more parameters from the secure development document
 | **Rate limiting** | Flask-Limiter (in-memory): login `5/min`, add-product `10/min`, search `30/min`; global `200/day 50/hour`; timed auto-release | DOS-1 (חסימת DOS) |
 | **Bot prevention** | reCAPTCHA v3 on login and add-product; token verified server-side (`score ≥ 0.5`); no browser-only check | BOT-1 (מניעת בוטים) |
 | **Logging** | All requests, failed logins, reCAPTCHA blocks, 4xx/5xx errors logged server-side via Python `logging` | LOG-2 (לוגים) |
-| **Log scrubbing** | Regex scrubber strips values from any log message containing: `password`, `token`, `secret`, `key`, `authorization`, `credential` (case-insensitive) — replaced with `[REDACTED]` | LOG-3 (לוגים) |
+| **Log scrubbing** | Regex scrubber strips values from any log message containing: `password`, `token`, `secret`, `key`, `authorization`, `credential` (case-insensitive) — the matched `key=value` pair is replaced with `key=[REDACTED]`; **only `=`-delimited patterns are correctly redacted** (the `:` delimiter form is matched by the regex but not properly replaced due to a bug in the lambda — the value leaks as `key: value=[REDACTED]`) | LOG-3 (לוגים) |
 | **No security questions** | Password recovery out of scope; documented gap | REC-1 |
 | **Version control** | Git + GitHub; all changes tracked with meaningful commits | VER-1 (ניהול גרסאות) |
 | **Dependencies** | All 9 packages pinned to exact versions in `requirements.txt`; no unused packages | Dependency layer |
@@ -69,7 +69,7 @@ Each control maps to one or more parameters from the secure development document
 | `/login` | GET, POST | No | 5/min | POST only (v3) | POST |
 | `/add` | GET, POST | Yes | 10/min | POST only (v3) | POST |
 | `/search` | GET | Yes | 30/min | No | No |
-| `/logout` | POST | Yes | Global | No | Yes |
+| `/logout` | POST | No | Global | No | Yes |
 
 ---
 
@@ -130,6 +130,13 @@ product-catalog/
 │   │   ├── auth.py       # Login (bcrypt, dummy-hash timing, rate-limited) — AUTH-1, DOS-1, ERR-2
 │   │   └── products.py   # Add + Search (validated, rate-limited, CAPTCHA-gated, login-required)
 │   │
+│   ├── static/
+│   │   ├── css/
+│   │   │   └── main.css          # Application styles
+│   │   ├── js/
+│   │   │   └── recaptcha.js      # reCAPTCHA token fetch before form submit; external file required by CSP (no unsafe-inline)
+│   │   └── favicon.svg
+│   │
 │   └── templates/
 │       ├── base.html     # CSP nonce injection, CSRF meta tag, nav
 │       ├── login.html    # reCAPTCHA v3 hidden field populated by recaptcha.js
@@ -153,7 +160,9 @@ cp .env.example .env
 FLASK_ENV=development flask --app wsgi:app run
 ```
 
-> With `FLASK_ENV=development`: DEBUG on, HTTPS not enforced, reCAPTCHA bypassed (token set to `dev-bypass`), session cookie Secure flag off.
+> **Note:** The GitHub repository was accidentally named `spam-product-catalog` instead of `epam-product-catalog`. The clone URL above is correct; the name is a typo and does not affect functionality.
+
+> With `FLASK_ENV=development`: DEBUG on, HTTPS not enforced, reCAPTCHA check skipped entirely server-side (`recaptcha.py` returns `True` immediately without examining the token), session cookie Secure flag off.
 
 ---
 
@@ -198,6 +207,6 @@ GRANT USAGE, SELECT ON SEQUENCE products_id_seq TO app_user;
 - [ ] **DOS-1** — Rate limits active: 429 returned after 5 login POST/min, 10 add POST/min, 30 search GET/min
 - [ ] **BOT-1** — reCAPTCHA v3 verified server-side; empty or replayed token returns 400 "Verification failed"
 - [ ] **LOG-2** — Failed logins, reCAPTCHA blocks, and 5xx errors appear in server logs with IP and username
-- [ ] **LOG-3** — No password, token, or secret value appears in any log line; scrubber replaces values with `[REDACTED]`
+- [ ] **LOG-3** — No password, token, or secret value appears in any log line; scrubber replaces `key=value` with `key=[REDACTED]` (note: `:` delimiter form not fully redacted — known bug in `logger.py`)
 - [ ] **PROTO-1** — `X-Frame-Options: DENY`; `X-Content-Type-Options: nosniff`; CSP blocks inline scripts and unlisted origins
 - [ ] **VER-1** — All changes tracked in Git; no secrets in git history
