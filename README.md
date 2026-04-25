@@ -1,15 +1,24 @@
-# Product Catalog — EPAM Interview Challenge
+# Product Catalog
 
-A secure Flask web application built as part of the EPAM / White Hat penetration testing role challenge.
-Every architectural and code decision maps to a specific parameter in the internal **פרמטרים לפיתוח מאובטח** (Secure Development Parameters) document.
+A secure Flask web application with two pages: add a product (name + price) and search products. Built with security-first design — every layer addresses a concrete attack vector.
 
-Live demo: https://epam-product-catalog.onrender.com
+**Live demo:** https://challange1-product-catalog.fly.dev/
+
+---
+
+## Tech Stack
+
+| Component | Choice |
+|---|---|
+| Language / Framework | Python 3.12 + Flask |
+| Database | PostgreSQL (Supabase, eu-west-1) |
+| Hosting | Fly.io, Frankfurt region — always-on |
+| Web server | Gunicorn |
+| Key libraries | Flask-WTF, Flask-Limiter, Flask-Talisman, psycopg2-binary, bcrypt |
 
 ---
 
 ## Functional Scope
-
-Two pages, one table, SQL-only access:
 
 | Page | Route | Auth required | Method |
 |---|---|---|---|
@@ -23,45 +32,43 @@ Two pages, one table, SQL-only access:
 
 ## Security Architecture
 
-Each control maps to one or more parameters from the secure development document.
-
-| Layer | Implementation | Parameter |
-|---|---|---|
-| **Input validation** | Server-side whitelist regex `^[A-Za-z0-9 ]{1,100}$` on name and search; rejects anything not matching before any DB call | INP-1 (רשימה לבנה) |
-| **Range validation** | Price: `0 < price ≤ 999,999.99`, rounded to 2 decimals; name: 1–100 chars enforced server-side | INP-3 (בדיקות לוגיות/טווחים) |
-| **Database** | All queries use psycopg2 `%s` parameterization; zero string concatenation; LIKE wildcard wrapped server-side: `f"%{val}%"` passed as param | DB-3 (שאילתות מול בסיס נתונים) |
-| **DB privileges** | `app_user` role: `SELECT + INSERT` on `products`; `SELECT` on `users`; no UPDATE/DELETE/DROP/schema rights | DB-1 (הרשאות מינימליות) |
-| **Secrets** | All secrets in environment variables; `.env` gitignored; `.env.example` committed with placeholder values only | CONF-1 (ניהול תצורה) |
-| **Transport** | HTTPS enforced via Render SSL + Flask-Talisman HSTS (`max-age=31536000`) | INT-1, ENC-2 |
-| **Security headers** | X-Frame-Options: DENY, X-Content-Type-Options: nosniff, Referrer-Policy: strict-origin-when-cross-origin, strict CSP (see below) | PROTO-1, ERR-1 |
-| **CSP** | `default-src 'self'`; `script-src 'strict-dynamic' https://www.google.com https://www.gstatic.com`; `frame-src https://www.google.com https://recaptcha.google.com`; `style-src 'self'`; `img-src 'self' data:`; `connect-src 'self' https://www.google.com https://recaptcha.google.com`; per-request nonce injected by Talisman | PROTO-1 |
-| **Session cookies** | `Secure=true`, `HttpOnly=true`, `SameSite=Strict`; 1-hour lifetime | Session layer, INT-1 |
-| **CSRF protection** | Flask-WTF tokens on all POST forms; token in meta tag for JS reads | CSRF layer |
-| **Password hashing** | bcrypt cost factor 12; one-way; plaintext never stored or logged | AUTH-1 (ערבול סיסמאות) |
-| **Timing attack prevention** | `_DUMMY_HASH` always compared when username not found — bcrypt always runs regardless of whether user exists | ERR-2 |
-| **Error messages** | All error responses use generic text; no stack traces, DB names, table names, or server details in response body; `DEBUG=False` in production | ERR-1, ERR-2 (הודעות שגיאה) |
-| **Rate limiting** | Flask-Limiter (in-memory): login `5/min`, add-product `10/min`, search `30/min`; global `200/day 50/hour`; timed auto-release | DOS-1 (חסימת DOS) |
-| **Bot prevention** | reCAPTCHA v3 on login and add-product; token verified server-side (`score ≥ 0.5`); no browser-only check | BOT-1 (מניעת בוטים) |
-| **Logging** | All requests, failed logins, reCAPTCHA blocks, 4xx/5xx errors logged server-side via Python `logging` | LOG-2 (לוגים) |
-| **Log scrubbing** | Regex scrubber strips values from any log message containing: `password`, `token`, `secret`, `key`, `authorization`, `credential` (case-insensitive) — the matched `key=value` pair is replaced with `key=[REDACTED]`; **only `=`-delimited patterns are correctly redacted** (the `:` delimiter form is matched by the regex but not properly replaced due to a bug in the lambda — the value leaks as `key: value=[REDACTED]`) | LOG-3 (לוגים) |
-| **No security questions** | Password recovery out of scope; documented gap | REC-1 |
-| **Version control** | Git + GitHub; all changes tracked with meaningful commits | VER-1 (ניהול גרסאות) |
-| **Dependencies** | All 9 packages pinned to exact versions in `requirements.txt`; no unused packages | Dependency layer |
+| Layer | Implementation |
+|---|---|
+| **Input validation** | Server-side whitelist regex `^[A-Za-z0-9 ]{1,100}$` on name and search; rejects anything not matching before any DB call |
+| **Range validation** | Price: `0 < price ≤ 999,999.99`, rounded to 2 decimals; name: 1–100 chars enforced server-side |
+| **SQL injection prevention** | All queries use psycopg2 `%s` parameterization; zero string concatenation; LIKE wildcard wrapped server-side as a parameter |
+| **DB least privilege** | `app_user` role: `SELECT + INSERT` on `products`; `SELECT` on `users` only; no UPDATE/DELETE/DROP/schema rights |
+| **Secrets management** | All secrets in environment variables; `.env` gitignored; `.env.example` committed with placeholder values only; `config.py` raises `RuntimeError` if any env var is missing at startup |
+| **Transport security** | HTTPS enforced via Fly.io + Flask-Talisman HSTS (`max-age=31536000`) |
+| **Security headers** | `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` |
+| **Content Security Policy** | `default-src 'self'`; `script-src 'strict-dynamic'` + google/gstatic; `frame-src` google/recaptcha; `style-src 'self'`; `img-src 'self' data:`; `connect-src 'self'` + google/recaptcha; per-request nonce injected by Talisman |
+| **Session cookies** | `Secure=true`, `HttpOnly=true`, `SameSite=Strict`; 1-hour lifetime |
+| **CSRF protection** | Flask-WTF tokens on all POST forms; token exposed via meta tag for JS reads |
+| **Password hashing** | bcrypt cost factor 12; one-way; plaintext never stored or logged |
+| **Timing attack prevention** | `_DUMMY_HASH` always compared when username not found — bcrypt always runs regardless of whether user exists, preventing user enumeration via response time |
+| **Error messages** | All error responses use generic text; no stack traces, DB names, table names, or server details in response body; `DEBUG=False` in production |
+| **Rate limiting** | Flask-Limiter (in-memory): login `5/min`, add-product `10/min`, search `30/min`; global `200/day 50/hour` |
+| **Bot prevention** | reCAPTCHA v3 on login and add-product; token verified server-side (`score ≥ 0.5`); no browser-only check |
+| **Logging** | All requests, failed logins, reCAPTCHA blocks, 4xx/5xx errors logged server-side |
+| **Log scrubbing** | Regex scrubber replaces values of sensitive fields (`password`, `token`, `secret`, `key`, `authorization`, `credential`) with `[REDACTED]` in all log output |
+| **Version control** | Git + GitHub; all changes tracked; no secrets in git history |
+| **Dependencies** | All 9 packages pinned to exact versions; no unused packages |
 
 ---
 
-### Known Gaps (documented honestly)
+### Known Gaps
 
-| Gap | Parameter | Remediation for production |
-|---|---|---|
-| No WAF | PROTO-1 | Add custom domain + Cloudflare Free WAF |
-| No SIEM | LOG-1 | Forward Render logs to a SIEM (Datadog, etc.) |
-| No password expiry | PASS-2 | Add expiry column to users table; enforce in middleware |
-| No OTP password recovery | REC-2 | Integrate email/SMS OTP service |
+| Gap | Remediation for production |
+|---|---|
+| No WAF | Add custom domain + Cloudflare Free WAF |
+| No SIEM | Forward Fly.io logs to a SIEM (Datadog, etc.) |
+| No password expiry | Add expiry column to users table; enforce in middleware |
+| No OTP password recovery | Integrate email/SMS OTP service |
+| Log scrubber bug | `logger.py` correctly redacts `key=value` patterns but not `key: value` (colon-delimited) — the value leaks as `key: value=[REDACTED]` due to a bug in the lambda |
 
 ---
 
-## Endpoints — Full Detail
+## Endpoints
 
 | Route | Methods | Auth | Rate limit | reCAPTCHA | CSRF |
 |---|---|---|---|---|---|
@@ -90,12 +97,12 @@ Note: HTML `pattern` and `min/max` attributes are present on the client but **al
 
 | Attack | Mitigated by | What to test |
 |---|---|---|
-| SQL Injection | Parameterized queries (DB-3) + whitelist (INP-1) | `' OR 1=1--`, UNION, time-based blind |
+| SQL Injection | Parameterized queries + whitelist input validation | `' OR 1=1--`, UNION, time-based blind |
 | XSS (stored/reflected) | Jinja2 auto-escaping + strict CSP | `<script>`, `"><img onerror=`, event handlers |
 | CSRF | Flask-WTF tokens; SameSite=Strict | Replay POST without token; cross-origin POST |
 | Brute force | Rate limit 5/min + bcrypt cost 12 | >5 login attempts/min; response time delta |
-| Credential stuffing | Same rate limit + reCAPTCHA v3 | Automated login with wordlist |
-| Bot attacks | reCAPTCHA v3 server-side score (BOT-1) | Replay old token; submit without token |
+| Credential stuffing | Rate limit + reCAPTCHA v3 | Automated login with wordlist |
+| Bot attacks | reCAPTCHA v3 server-side score | Replay old token; submit without token |
 | User enumeration | Generic "Invalid credentials" + constant-time bcrypt | Compare response time/body for valid vs invalid user |
 | Session hijacking | Secure + HttpOnly + SameSite cookies; HTTPS | Intercept cookie; test over HTTP |
 | Clickjacking | X-Frame-Options: DENY | Embed in `<iframe>` |
@@ -111,23 +118,23 @@ Note: HTML `pattern` and `min/max` attributes are present on the client but **al
 
 ```
 product-catalog/
-├── .env.example          # Secret template — CONF-1
-├── .gitignore            # Blocks .env from repo — CONF-1
-├── requirements.txt      # 9 packages, all pinned — Dependency layer
+├── .env.example          # Secret template with placeholder values only
+├── .gitignore            # Blocks .env from repo
+├── requirements.txt      # 9 packages, all pinned to exact versions
 ├── wsgi.py               # Gunicorn entry point
 ├── create_user.py        # Local utility to bcrypt-hash a password
 │
 ├── app/
 │   ├── __init__.py       # App factory: Talisman (CSP/HSTS), CSRF, Limiter, blueprints
-│   ├── config.py         # Reads secrets from env; RuntimeError if any missing — CONF-1
-│   ├── db.py             # Sole DB access point; parameterized queries only — DB-3
-│   ├── validators.py     # Whitelist regex + range checks — INP-1, INP-3
-│   ├── recaptcha.py      # Server-side reCAPTCHA v3 score verification — BOT-1
-│   ├── logger.py         # Structured logging; regex scrubs sensitive field values — LOG-2, LOG-3
-│   ├── error_handlers.py # Generic HTTP error responses for 400/403/404/405/429/500 — ERR-1
+│   ├── config.py         # Reads secrets from env; RuntimeError if any missing
+│   ├── db.py             # Sole DB access point; parameterized queries only
+│   ├── validators.py     # Whitelist regex + range checks
+│   ├── recaptcha.py      # Server-side reCAPTCHA v3 score verification
+│   ├── logger.py         # Structured logging; regex scrubs sensitive field values
+│   ├── error_handlers.py # Generic HTTP error responses for 400/403/404/405/429/500
 │   │
 │   ├── routes/
-│   │   ├── auth.py       # Login (bcrypt, dummy-hash timing, rate-limited) — AUTH-1, DOS-1, ERR-2
+│   │   ├── auth.py       # Login (bcrypt, dummy-hash timing, rate-limited)
 │   │   └── products.py   # Add + Search (validated, rate-limited, CAPTCHA-gated, login-required)
 │   │
 │   ├── static/
@@ -138,11 +145,11 @@ product-catalog/
 │   │   └── favicon.svg
 │   │
 │   └── templates/
-│       ├── base.html     # CSP nonce injection, CSRF meta tag, nav
-│       ├── login.html    # reCAPTCHA v3 hidden field populated by recaptcha.js
+│       ├── base.html         # CSP nonce injection, CSRF meta tag, nav
+│       ├── login.html        # reCAPTCHA v3 hidden field populated by recaptcha.js
 │       ├── add_product.html  # reCAPTCHA v3; client-side pattern mirrors server regex
-│       ├── search.html   # Output escaped by Jinja2
-│       └── error.html    # Generic error page
+│       ├── search.html       # Output escaped by Jinja2
+│       └── error.html        # Generic error page
 ```
 
 ---
@@ -166,7 +173,7 @@ FLASK_ENV=development flask --app wsgi:app run
 
 ---
 
-## Database Setup (Supabase)
+## Database Setup
 
 ```sql
 CREATE TABLE products (
@@ -183,30 +190,10 @@ CREATE TABLE users (
     created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Minimal privileges for the app user (DB-1)
+-- Minimal privileges: app_user cannot UPDATE, DELETE, DROP, or access schema
 CREATE ROLE app_user WITH LOGIN PASSWORD 'STRONG_PASSWORD';
 GRANT USAGE ON SCHEMA public TO app_user;
 GRANT SELECT, INSERT ON TABLE products TO app_user;
 GRANT SELECT ON TABLE users TO app_user;
 GRANT USAGE, SELECT ON SEQUENCE products_id_seq TO app_user;
 ```
-
----
-
-## Security Self-Audit Checklist
-
-- [ ] **INP-1** — All inputs validated server-side with `^[A-Za-z0-9 ]{1,100}$` before any DB call; HTML pattern is a UX hint only
-- [ ] **INP-3** — Price validated: `0 < price ≤ 999,999.99`; enforced in `validators.py` independently of HTML `min/max`
-- [ ] **DB-3** — Zero dynamic SQL; all queries use psycopg2 `%s` params; LIKE wildcard injected server-side not client-side
-- [ ] **DB-1** — `app_user` has no UPDATE, DELETE, DROP, or schema-level rights; verified in Supabase role grants
-- [ ] **CONF-1** — `.env` gitignored; no secret in any committed file; `config.py` raises `RuntimeError` if env var missing
-- [ ] **INT-1** — HTTPS enforced; `Strict-Transport-Security: max-age=31536000` present in all production responses
-- [ ] **AUTH-1** — Password stored as bcrypt hash (`$2b$12$…`); plaintext never stored or logged
-- [ ] **ERR-2** — Login returns identical body and timing for wrong password vs unknown username
-- [ ] **ERR-1** — 500 errors return generic message; no stack trace, module path, or DB detail in response body
-- [ ] **DOS-1** — Rate limits active: 429 returned after 5 login POST/min, 10 add POST/min, 30 search GET/min
-- [ ] **BOT-1** — reCAPTCHA v3 verified server-side; empty or replayed token returns 400 "Verification failed"
-- [ ] **LOG-2** — Failed logins, reCAPTCHA blocks, and 5xx errors appear in server logs with IP and username
-- [ ] **LOG-3** — No password, token, or secret value appears in any log line; scrubber replaces `key=value` with `key=[REDACTED]` (note: `:` delimiter form not fully redacted — known bug in `logger.py`)
-- [ ] **PROTO-1** — `X-Frame-Options: DENY`; `X-Content-Type-Options: nosniff`; CSP blocks inline scripts and unlisted origins
-- [ ] **VER-1** — All changes tracked in Git; no secrets in git history
